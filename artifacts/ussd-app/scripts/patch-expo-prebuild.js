@@ -30,14 +30,15 @@ if (content.includes('/* CI_PATCHED */')) {
   process.exit(0);
 }
 
+// Skip the install entirely (deps are already installed by pnpm).
+// Using `false && ...` short-circuits both the prompt AND the install.
 const original = 'if (await (0, _prompts.confirmAsync)({';
-const patched  = 'if (/* CI_PATCHED */ true || await (0, _prompts.confirmAsync)({';
+const patched  = 'if (/* CI_PATCHED */ false && await (0, _prompts.confirmAsync)({';
 
 if (!content.includes(original)) {
-  // Try alternate pattern (newer expo versions)
   const alt = 'if (await confirmAsync({';
   if (content.includes(alt)) {
-    content = content.replace(alt, 'if (/* CI_PATCHED */ true || confirmAsync({');
+    content = content.replace(alt, 'if (/* CI_PATCHED */ false && confirmAsync({');
     fs.writeFileSync(prebuildFile, content, 'utf8');
     console.log('[patch-expo] ✅ Patched (alt pattern):', prebuildFile);
     process.exit(0);
