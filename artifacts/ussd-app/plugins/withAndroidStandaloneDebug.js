@@ -1,5 +1,4 @@
 const {
-  withAppBuildGradle,
   withMainApplication,
   withDangerousMod,
 } = require('expo/config-plugins');
@@ -7,27 +6,7 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const ABI_SPLITS_BLOCK = `
-    splits {
-        abi {
-            enable true
-            reset()
-            include 'arm64-v8a'
-            universalApk false
-        }
-    }
-`;
-
 module.exports = function withAndroidStandaloneDebug(config) {
-  config = withAppBuildGradle(config, (cfg) => {
-    let g = cfg.modResults.contents;
-    if (g.includes('android {') && !g.includes('splits {')) {
-      g = g.replace(/android\s*\{/, 'android {' + ABI_SPLITS_BLOCK);
-    }
-    cfg.modResults.contents = g;
-    return cfg;
-  });
-
   config = withMainApplication(config, (cfg) => {
     let mainApp = cfg.modResults.contents;
     if (!mainApp.includes('getUseDeveloperSupport')) {
@@ -51,16 +30,16 @@ module.exports = function withAndroidStandaloneDebug(config) {
 
       fs.mkdirSync(assetsDir, { recursive: true });
 
-      console.log('[STANDALONE] Pre-bundling JS for embedded use...');
+      console.log('[STANDALONE] Pre-bundling JS...');
       try {
         execSync(
           `npx expo export:embed --platform android --dev false --bundle-output "${bundlePath}" --assets-dest "${resDir}"`,
           { cwd: projectRoot, stdio: 'inherit' }
         );
         const stats = fs.statSync(bundlePath);
-        console.log(`[STANDALONE] Bundle generated: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+        console.log(`[STANDALONE] Bundle: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
       } catch (e) {
-        console.error('[STANDALONE] Bundle generation FAILED:', e.message);
+        console.error('[STANDALONE] Bundle FAILED:', e.message);
         throw e;
       }
 
