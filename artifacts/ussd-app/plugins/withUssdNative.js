@@ -6,15 +6,27 @@ const {
 const path = require('path');
 const fs = require('fs');
 
-const PACKAGE = 'com.ussdapp';
-const PACKAGE_PATH = PACKAGE.replace(/\./g, '/');
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// FIX #1: ظ„ط§ ظٹظˆط¬ط¯ hardcoded package â€” ظ†ظ‚ط±ط£ظ‡ ظ…ظ† config ط§ظ„طھط·ط¨ظٹظ‚ ظپظٹ runtime
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function getPackage(config) {
+  return (
+    config.android?.package ||
+    config.ios?.bundleIdentifier ||
+    'com.ussdapp'
+  );
+}
 
-const KOTLIN_FILES = {
-  'UssdAccessibilityService.kt': `package ${PACKAGE}
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// UssdAccessibilityService.kt
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function buildAccessibilityServiceKt(pkg) {
+  return `package ${pkg}
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -22,143 +34,171 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
 /**
- * Intercepts USSD dialogs from dialer packages.
+ * ظٹط±ط§ظ‚ط¨ ظ†ظˆط§ظپط° ط§ظ„ظ€ dialer ظˆظٹظ…ظ†ط¹ ط¸ظ‡ظˆط± ظ†ط§ظپط°ط© USSD ظ„ظ„ظ…ط³طھط®ط¯ظ… ظ†ظ‡ط§ط¦ظٹط§ظ‹.
  *
- * Architecture:
- *  - The native USSD dialog is kept ALIVE in the background at all times during a session.
- *    We never press BACK mid-session because that would cancel the USSD session.
- *  - On each USSD step: extract text â†’ forward to RN via event â†’ bring our Activity
- *    to foreground so the dialog is hidden behind our app.
- *  - When user replies in our app, sendUssdReply() queues the text and calls
- *    tryImmediateFill() which targets the background dialog's EditText + Send button.
- *    If the window is not yet active, the reply is sent when the next accessibility
- *    event arrives (handleUssdDialog drains awaitingReply).
- *  - Session cancel: the NativeModule calls cancelAndDismiss() which presses BACK
- *    to close the background dialog only then.
+ * ظƒظٹظپ ظٹط¹ظ…ظ„:
+ *  - ظپظˆط± ط¸ظ‡ظˆط± ظ†ط§ظپط°ط© USSD ظ…ظ† ط§ظ„ظ€ dialer â†’ performGlobalAction(GLOBAL_ACTION_HOME)
+ *    ظٹط®ظپظٹظ‡ط§ ظپظˆط±ط§ظ‹ ط®ظ„ظپ Launcher ط¨ط¯ظˆظ† ط¥ظ„ط؛ط§ط، ط§ظ„ط¬ظ„ط³ط©.
+ *  - ط¨ط¹ط¯ظ‡ط§ ظ†ظڈط¹ظٹط¯ طھط·ط¨ظٹظ‚ظ†ط§ ظ„ظ„ط£ظ…ط§ظ….
+ *  - ط§ظ„ط±ط¯ظˆط¯ طھظڈظ…ظ„ط£ ظپظٹ ط§ظ„ط®ظ„ظپظٹط© ط¹ط¨ط± tryFillAllWindows().
+ *  - ظ„ط¥ظ†ظ‡ط§ط، ط§ظ„ط¬ظ„ط³ط© ظپظ‚ط· ظ†ط¶ط؛ط· BACK ط¹ظ„ظ‰ ظ†ط§ظپط°ط© ط§ظ„ظ€ dialer طھط­ط¯ظٹط¯ط§ظ‹.
  */
 class UssdAccessibilityService : AccessibilityService() {
 
     companion object {
-        private const val TAG = "UssdAccessibility"
+        private const val TAG = "UssdA11y"
         var instance: UssdAccessibilityService? = null
         var nativeModuleRef: UssdNativeModule? = null
-        @Volatile private var awaitingReply: String? = null
-        @Volatile private var lastForwardedText: String = ""
 
-        /** Queue a reply; also attempts an immediate fill on the background dialog. */
+        @Volatile var awaitingReply: String? = null
+        @Volatile private var lastForwardedText: String = ""
+        @Volatile var sessionActive: Boolean = false
+
+        // FIX #5: dedupe ط¨ظٹظ† callback ظˆط§ظ„ظ€ accessibility layer
+        // ظ†ط­ظپط¸ ط¢ط®ط± ظ†طµ ط£ط±ط³ظ„ظ‡ NativeModule ظƒظٹ ظ„ط§ ظٹظڈط±ط³ظ„ ظ…ط±طھظٹظ†
+        @Volatile var lastNativeModuleText: String = ""
+
         fun setAwaitingReply(text: String) {
             awaitingReply = text
             instance?.tryImmediateFill()
         }
 
-        /**
-         * Dismiss the background USSD dialog. Called ONLY when the user explicitly
-         * cancels the session â€” never during normal step progression.
-         */
+        // FIX #6: cancelAndDismiss ظٹط³طھظ‡ط¯ظپ ظ†ط§ظپط°ط© ط§ظ„ظ€ dialer طھط­ط¯ظٹط¯ط§ظ‹ ط¨ط¯ظ„ GLOBAL_ACTION_BACK ط§ظ„ط¹ط§ظ…
         fun cancelAndDismiss() {
             awaitingReply = null
             lastForwardedText = ""
-            instance?.performGlobalAction(GLOBAL_ACTION_BACK)
+            lastNativeModuleText = ""
+            sessionActive = false
+            instance?.dismissDialerWindow()
         }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val dialerPackages = setOf(
-        "com.android.phone", "com.google.android.dialer",
-        "com.samsung.android.dialer", "com.android.dialer"
+        "com.android.phone",
+        "com.google.android.dialer",
+        "com.samsung.android.dialer",
+        "com.android.dialer",
+        "com.huawei.phone",
+        "com.miui.phone"
     )
+
+    private var lastHideTime = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        val info = serviceInfo ?: AccessibilityServiceInfo()
-        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-        info.packageNames = dialerPackages.toTypedArray()
-        info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-        info.notificationTimeout = 100
+        val info = AccessibilityServiceInfo().apply {
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+            packageNames = dialerPackages.toTypedArray()
+            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            notificationTimeout = 50
+            flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
         serviceInfo = info
-        Log.d(TAG, "AccessibilityService connected")
+        Log.d(TAG, "Service connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
         if (!dialerPackages.contains(pkg)) return
-        val isStateChange = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-        if (isStateChange || event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            val root = rootInActiveWindow ?: return
-            handleUssdDialog(root, isStateChange)
+
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                val root = rootInActiveWindow ?: return
+                handleDialerWindow(root, isNewWindow = true)
+            }
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                val root = rootInActiveWindow ?: return
+                handleDialerWindow(root, isNewWindow = false)
+            }
         }
     }
 
-    private fun handleUssdDialog(root: AccessibilityNodeInfo, isStateChange: Boolean) {
+    private fun handleDialerWindow(root: AccessibilityNodeInfo, isNewWindow: Boolean) {
         val messageText = extractUssdMessage(root) ?: return
         if (messageText.isBlank()) return
-        // Skip duplicate content-changed events to avoid flooding RN
-        if (!isStateChange && messageText == lastForwardedText) return
+
+        if (!isNewWindow && messageText == lastForwardedText) return
         lastForwardedText = messageText
-        Log.d(TAG, "USSD text: ${'$'}messageText")
-        nativeModuleRef?.sendUssdScreenEvent(messageText)
+        sessionActive = true
 
-        // Bring our Activity to the foreground so the user sees our UI,
-        // NOT the native dialog. The dialog stays alive behind our app.
-        bringAppToForeground()
+        Log.d(TAG, "USSD text intercepted: $messageText")
 
-        // If a reply was queued before this event, drain it now
+        // ط£ط®ظپظگ ط§ظ„ظ†ط§ظپط°ط© ظپظˆط±ط§ظ‹ ط¨ظ€ HOME (ظ„ط§ ظٹظ„ط؛ظٹ ط¬ظ„ط³ط© USSD)
+        val now = System.currentTimeMillis()
+        if (now - lastHideTime > 300) {
+            lastHideTime = now
+            performGlobalAction(GLOBAL_ACTION_HOME)
+        }
+
+        // FIX #5: ظ„ط§ طھط±ط³ظ„ ط§ظ„ظ†طµ ط¥ط°ط§ NativeModule ط£ط±ط³ظ„ظ‡ ط¨ط§ظ„ظپط¹ظ„
+        if (messageText != lastNativeModuleText) {
+            nativeModuleRef?.sendUssdScreenEvent(messageText)
+        }
+
+        // ط¥ط°ط§ ظپظٹ ط±ط¯ ظ…ظ†طھط¸ط± â†’ ط§ط±ط¯ظ‘ ظپظˆط±ط§ظ‹
         val reply = awaitingReply
         if (reply != null) {
             awaitingReply = null
-            // Post with short delay to let the window settle after bringToForeground
-            mainHandler.postDelayed({ fillInBackground(reply) }, 80)
+            mainHandler.postDelayed({ tryFillAllWindows(reply) }, 150)
         }
+
+        // ط£ط¹ط¯ طھط·ط¨ظٹظ‚ظ†ط§ ظ„ظ„ط£ظ…ط§ظ… ط¨ط¹ط¯ ط§ظ„ط¥ط®ظپط§ط،
+        mainHandler.postDelayed({ bringAppToForeground() }, 100)
     }
 
-    /**
-     * Try to fill the reply immediately by posting to the main Looper.
-     * The background dialer window may or may not be in rootInActiveWindow,
-     * so we attempt fill with a retry.
-     */
     fun tryImmediateFill() {
         mainHandler.post {
             val reply = awaitingReply ?: return@post
-            val root = rootInActiveWindow
-            if (root != null) {
-                val pkg = root.packageName?.toString()
-                if (pkg != null && dialerPackages.contains(pkg)) {
-                    val success = fillAndSend(root, reply)
-                    if (success) awaitingReply = null
-                    return@post
-                }
-            }
-            // Dialer not the active window yet; the reply will be drained on next event
+            val filled = tryFillAllWindows(reply)
+            if (filled) awaitingReply = null
         }
     }
 
-    /**
-     * Fill the reply into the background dialer window.
-     * The active window at this point should be our app; we use rootInActiveWindow
-     * via a stored reference. Since Android accessibility can access all windows,
-     * we iterate available windows to find the dialer.
-     */
-    private fun fillInBackground(reply: String) {
-        // Try active window first (may be ours or dialer depending on focus)
-        val active = rootInActiveWindow
-        if (active != null) {
-            val pkg = active.packageName?.toString()
+    private fun tryFillAllWindows(reply: String): Boolean {
+        // ط£ظˆظ„ط§ظ‹ ط¬ط±ط¨ ط§ظ„ظ†ط§ظپط°ط© ط§ظ„ظ†ط´ط·ط©
+        rootInActiveWindow?.let { root ->
+            val pkg = root.packageName?.toString()
             if (pkg != null && dialerPackages.contains(pkg)) {
-                fillAndSend(active, reply)
-                return
+                if (fillAndSend(root, reply)) return true
             }
         }
-        // Walk all windows to find the dialer dialog behind our app
-        val windows = windows ?: return
-        for (win in windows) {
-            val root = win.root ?: continue
-            val pkg = root.packageName?.toString() ?: continue
-            if (dialerPackages.contains(pkg)) {
-                fillAndSend(root, reply)
-                break
+        // ط«ط§ظ†ظٹط§ظ‹ ط§ظ…ط´ظگ ط¹ظ„ظ‰ ظƒظ„ ط§ظ„ظ†ظˆط§ظپط°
+        try {
+            windows?.forEach { win ->
+                val root = win.root ?: return@forEach
+                val pkg = root.packageName?.toString() ?: return@forEach
+                if (dialerPackages.contains(pkg)) {
+                    if (fillAndSend(root, reply)) return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "windows iteration failed: \${e.message}")
+        }
+        return false
+    }
+
+    // FIX #6: ظٹط³طھظ‡ط¯ظپ ظ†ط§ظپط°ط© ط§ظ„ظ€ dialer طھط­ط¯ظٹط¯ط§ظ‹ ظˆظٹط¶ط؛ط· BACK ط¹ظ„ظٹظ‡ط§
+    fun dismissDialerWindow() {
+        mainHandler.post {
+            try {
+                windows?.forEach { win ->
+                    val root = win.root ?: return@forEach
+                    val pkg = root.packageName?.toString() ?: return@forEach
+                    if (dialerPackages.contains(pkg)) {
+                        // BACK ط¹ظ„ظ‰ ط§ظ„ظ†ط§ظپط°ط© ط§ظ„ظ…ط³طھظ‡ط¯ظپط© ط¨ط¯ظ„ global BACK
+                        win.performAction(android.view.accessibility.AccessibilityWindowInfo.ACTION_ACCESSIBILITY_FOCUS)
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        return@post
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "dismissDialerWindow failed: \${e.message}")
+                // ط¢ط®ط± ط®ظٹط§ط±: global BACK
+                performGlobalAction(GLOBAL_ACTION_BACK)
             }
         }
     }
@@ -166,107 +206,115 @@ class UssdAccessibilityService : AccessibilityService() {
     private fun extractUssdMessage(root: AccessibilityNodeInfo): String? {
         val texts = mutableListOf<String>()
         collectTexts(root, texts)
-        return if (texts.isEmpty()) null else texts.joinToString("\\n").trim()
+        if (texts.isEmpty()) return null
+        val filtered = texts.filter { text ->
+            text.length > 2 &&
+            !text.equals("OK", ignoreCase = true) &&
+            !text.equals("Cancel", ignoreCase = true) &&
+            !text.equals("Send", ignoreCase = true) &&
+            !text.equals("ط¥ط±ط³ط§ظ„", ignoreCase = true) &&
+            !text.equals("ظ…ظˆط§ظپظ‚", ignoreCase = true) &&
+            !text.equals("ط¥ظ„ط؛ط§ط،", ignoreCase = true)
+        }
+        return filtered.joinToString("\\n").trim().ifBlank { null }
     }
 
     private fun collectTexts(node: AccessibilityNodeInfo, out: MutableList<String>) {
-        val txt = node.text
-        if (txt?.isNotBlank() == true) out.add(txt.toString().trim())
+        val className = node.className?.toString() ?: ""
+        if (className != "android.widget.EditText") {
+            val txt = node.text
+            if (txt?.isNotBlank() == true) out.add(txt.toString().trim())
+        }
+        // FIX #3: ط§ط³طھط®ط¯ظ… continue@ ط¨ط¯ظ„ return ظ„ظ…ظ†ط¹ طھظˆظ‚ظپ traversal ط§ظ„ظ…ط¨ظƒط±
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collectTexts(child, out)
         }
     }
 
-    /**
-     * Set text in the USSD dialog's EditText and click Send/OK.
-     * Does NOT press BACK â€” the dialog must remain alive to process the reply.
-     * Returns true if the text field was found and SET_TEXT succeeded.
-     */
+    // FIX #4: fillAndSend طھط¹طھط¨ط± ط§ظ„ظ†ط¬ط§ط­ ظپظ‚ط· ظ„ظˆ ط§ظ„ظ†طµ ط§طھط­ط· + ط²ط± ط§ظ„ط¥ط±ط³ط§ظ„ ط§طھط¶ط؛ط· ظپط¹ظ„ط§ظ‹
     private fun fillAndSend(root: AccessibilityNodeInfo, reply: String): Boolean {
         val editTexts = findNodesByClass(root, "android.widget.EditText")
         val editNode = editTexts.firstOrNull() ?: run {
-            Log.w(TAG, "fillAndSend: no EditText found")
+            Log.w(TAG, "No EditText found in dialer window")
             return false
         }
-        val args = android.os.Bundle().apply {
+
+        val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, reply)
         }
-        val textSet = editNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        var textSet = editNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+
+        if (!textSet) {
+            Log.w(TAG, "ACTION_SET_TEXT failed, trying click-then-set")
+            editNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            textSet = editNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        }
+
         val buttons = findNodesByClass(root, "android.widget.Button")
         val sendBtn = buttons.firstOrNull { btn ->
             val lbl = btn.text?.toString()?.lowercase() ?: ""
-            lbl.contains("send") || lbl.contains("ok") || lbl.contains("ط¥ط±ط³ط§ظ„") ||
-            lbl.contains("ظ…ظˆط§ظپظ‚") || lbl.contains("confirm") || lbl.contains("reply")
-        }
-        if (sendBtn == null) {
-            Log.w(TAG, "fillAndSend: no Send button found, trying first button")
-            buttons.firstOrNull()?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        } else {
-            sendBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        }
-        Log.d(TAG, "fillAndSend: textSet=${'$'}textSet reply=${'$'}reply")
-        return textSet
+            lbl.contains("send") || lbl.contains("ok") ||
+            lbl.contains("ط¥ط±ط³ط§ظ„") || lbl.contains("ظ…ظˆط§ظپظ‚") ||
+            lbl.contains("confirm") || lbl.contains("reply") ||
+            lbl.contains("yes") || lbl.contains("ظ†ط¹ظ…")
+        } ?: buttons.lastOrNull()
+
+        val btnClicked = sendBtn?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+
+        if (sendBtn == null) Log.w(TAG, "No Send button found")
+
+        Log.d(TAG, "fillAndSend: textSet=\$textSet btnClicked=\$btnClicked reply='\$reply'")
+
+        // FIX #4: ظ†ط¬ط§ط­ ط­ظ‚ظٹظ‚ظٹ = ط§ظ„ظ†طµ ط§طھط­ط· + ط§ظ„ط²ط± ط§طھط¶ط؛ط·
+        return textSet && btnClicked
     }
 
-    private fun findNodesByClass(root: AccessibilityNodeInfo, className: String): List<AccessibilityNodeInfo> {
+    // FIX #3: findNodesByClass ط¨ظ€ continue@ ط¨ط¯ظ„ return ظ„ظ…ظ†ط¹ ط§ظ„طھظˆظ‚ظپ ط§ظ„ظ…ط¨ظƒط±
+    private fun findNodesByClass(
+        root: AccessibilityNodeInfo,
+        className: String
+    ): List<AccessibilityNodeInfo> {
         val results = mutableListOf<AccessibilityNodeInfo>()
         fun traverse(node: AccessibilityNodeInfo) {
             if (node.className?.toString() == className) results.add(node)
-            for (i in 0 until node.childCount) traverse(node.getChild(i) ?: return)
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue  // FIX #3
+                traverse(child)
+            }
         }
         traverse(root)
         return results
     }
 
     private fun bringAppToForeground() {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                Intent.FLAG_ACTIVITY_NO_ANIMATION
-            )
-            putExtra("from_ussd_service", true)
+        try {
+            val intent = Intent(this, Class.forName("\${packageName}.MainActivity")).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_NO_ANIMATION
+                )
+                putExtra("from_ussd_service", true)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "bringAppToForeground failed: \${e.message}")
         }
-        // Aggressive re-foregrounding: dialer dialogs (especially Samsung)
-        // can re-appear on top after our first launch. We re-trigger the
-        // launch a few times to override.
-        startActivity(intent)
-        mainHandler.postDelayed({ try { startActivity(intent) } catch (_: Exception) {} }, 200)
-        mainHandler.postDelayed({ try { startActivity(intent) } catch (_: Exception) {} }, 600)
     }
 
     override fun onInterrupt() {
         instance = null
     }
-}`,
+}`;
+}
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // MODIFIED: UssdNativeModule.kt
-  //
-  // KEY CHANGE â€” startUssd() now uses TelephonyManager.sendUssdRequest() (API 26+)
-  // instead of firing an ACTION_CALL Intent that opens the system dialer dialog.
-  //
-  // How it works:
-  //   1. TelephonyManager.sendUssdRequest() sends the USSD code silently over the
-  //      radio â€” Android never shows the native USSD popup at all.
-  //   2. The OS calls back our UssdResponseCallback with the first response text.
-  //   3. We forward that text to React Native via sendUssdScreenEvent(), exactly
-  //      as the AccessibilityService did before â€” so the JS side is unchanged.
-  //   4. Multi-step sessions: after the user types a reply in the app, sendUssdReply()
-  //      calls activeCallback?.sendUssdResponse(text) directly on the open session
-  //      object â€” no dialer window involved at any step.
-  //   5. cancelSession() calls activeCallback?.onReceiveUssdResponse() with an
-  //      empty string to close the session, or simply clears the reference.
-  //
-  // Fallback: on devices running Android < 8 (API 26) the old Intent-based path
-  // is kept so the app still works, just with the native dialog visible.
-  //
-  // Permissions required (already in the manifest via withUssdManifest):
-  //   CALL_PHONE, READ_PHONE_STATE
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  'UssdNativeModule.kt': `package com.ussdapp
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// UssdNativeModule.kt
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function buildNativeModuleKt(pkg) {
+  return `package ${pkg}
 
 import android.Manifest
 import android.content.Context
@@ -281,7 +329,6 @@ import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import android.telephony.TelephonyManager.UssdResponseCallback
 import android.util.Log
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
@@ -296,35 +343,39 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
         const val EVENT_SCREEN = "USSD_SCREEN_TEXT"
         const val EVENT_SESSION_END = "USSD_SESSION_ENDED"
         const val EVENT_ERROR = "USSD_ERROR"
-        const val EVENT_FOREGROUND = "USSD_BRING_FOREGROUND"
         private const val TAG = "UssdNativeModule"
-        private const val PERMISSION_REQUEST_CODE = 9001
+        private const val PERM_CODE = 9001
     }
 
-    // Pending USSD code + simSlot waiting for permission grant
-    @Volatile private var pendingUssdCode: String? = null
-    @Volatile private var pendingSimSlot: Int = -1
+    @Volatile private var pendingCode: String? = null
+    @Volatile private var pendingSlot: Int = -1
     @Volatile private var pendingPromise: Promise? = null
 
-    init { UssdAccessibilityService.nativeModuleRef = this }
+    init {
+        UssdAccessibilityService.nativeModuleRef = this
+    }
 
     override fun getName() = MODULE_NAME
     override fun canOverrideExistingModule() = false
 
-    // PermissionListener â€” called when the user responds to the permission dialog
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray): Boolean {
-        if (requestCode != PERMISSION_REQUEST_CODE) return false
-        val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
-        val code = pendingUssdCode
-        val slot = pendingSimSlot
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ): Boolean {
+        if (requestCode != PERM_CODE) return false
+        val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+
+        val code = pendingCode
+        val slot = pendingSlot
         val promise = pendingPromise
-        pendingUssdCode = null
-        pendingSimSlot = -1
-        pendingPromise = null
+        pendingCode = null; pendingSlot = -1; pendingPromise = null
+
         if (granted && code != null && promise != null) {
-            executeSendUssdRequest(code, slot, promise)
+            doSendUssdRequest(code, slot, promise)
         } else {
-            promise?.reject("PERMISSION_DENIED", "CALL_PHONE permission was denied")
+            promise?.reject("PERMISSION_DENIED", "طµظ„ط§ط­ظٹط© CALL_PHONE ظ…ط±ظپظˆط¶ط©")
         }
         return true
     }
@@ -332,8 +383,7 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun startUssd(code: String, simSlot: Int, promise: Promise) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            // Android < 8: fallback to Intent (dialer will show, AccessibilityService handles it)
-            startViaIntent(code, simSlot, promise)
+            promise.reject("API_TOO_LOW", "ظٹطھط·ظ„ط¨ Android 8.0 ط£ظˆ ط£ط­ط¯ط«")
             return
         }
 
@@ -342,30 +392,21 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
         ) == PackageManager.PERMISSION_GRANTED
 
         if (hasPermission) {
-            executeSendUssdRequest(code, simSlot, promise)
+            doSendUssdRequest(code, simSlot, promise)
         } else {
-            // Store pending state and request permission from the current Activity
-            pendingUssdCode = code
-            pendingSimSlot = simSlot
-            pendingPromise = promise
             val activity = currentActivity
             if (activity is PermissionAwareActivity) {
+                pendingCode = code; pendingSlot = simSlot; pendingPromise = promise
                 activity.requestPermissions(
-                    arrayOf(Manifest.permission.CALL_PHONE),
-                    PERMISSION_REQUEST_CODE,
-                    this
+                    arrayOf(Manifest.permission.CALL_PHONE), PERM_CODE, this
                 )
             } else {
-                // Cannot request permission â€” reject cleanly
-                pendingUssdCode = null
-                pendingSimSlot = -1
-                pendingPromise = null
-                promise.reject("NO_ACTIVITY", "Cannot request permission: no foreground activity")
+                promise.reject("NO_ACTIVITY", "ظ„ط§ ظٹظˆط¬ط¯ Activity ظ†ط´ط· ظ„ط·ظ„ط¨ ط§ظ„طµظ„ط§ط­ظٹط©")
             }
         }
     }
 
-    private fun executeSendUssdRequest(code: String, simSlot: Int, promise: Promise) {
+    private fun doSendUssdRequest(code: String, simSlot: Int, promise: Promise) {
         try {
             val tm = reactContext.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
             val targetTm = if (simSlot >= 0) {
@@ -382,7 +423,9 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
                     response: CharSequence
                 ) {
                     val text = response.toString()
-                    Log.d(TAG, "USSD response: ${'$'}text")
+                    Log.d(TAG, "USSD response: \$text")
+                    // FIX #5: ط³ط¬ظ‘ظ„ ط§ظ„ظ†طµ ظ‚ط¨ظ„ ط§ظ„ط¥ط±ط³ط§ظ„ ظƒظٹ ظٹطھط¬ظ†ط¨ظ‡ AccessibilityService
+                    UssdAccessibilityService.lastNativeModuleText = text
                     sendUssdScreenEvent(text)
                 }
 
@@ -391,37 +434,25 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
                     request: String,
                     failureCode: Int
                 ) {
-                    Log.e(TAG, "USSD failed code=${'$'}failureCode")
-                    sendErrorEvent("USSD request failed (code ${'$'}failureCode)")
+                    Log.e(TAG, "USSD failed: \$failureCode")
+                    val msg = when (failureCode) {
+                        TelephonyManager.USSD_ERROR_SERVICE_UNAVAIL -> "ط®ط¯ظ…ط© USSD ط؛ظٹط± ظ…طھط§ط­ط©"
+                        TelephonyManager.USSD_RETURN_FAILURE -> "ظپط´ظ„ USSD (ط±ظ…ط²: \$failureCode)"
+                        else -> "ط®ط·ط£ USSD (ط±ظ…ط²: \$failureCode)"
+                    }
+                    sendErrorEvent(msg)
                     sendSessionEndEvent("error")
+                    UssdAccessibilityService.sessionActive = false
                 }
             }, handler)
 
             promise.resolve(true)
+        } catch (se: SecurityException) {
+            promise.reject("PERMISSION_DENIED", "طµظ„ط§ط­ظٹط© CALL_PHONE ظ…ط·ظ„ظˆط¨ط©: \${se.message}")
         } catch (e: Exception) {
-            Log.e(TAG, "sendUssdRequest exception: ${'$'}{e.message}")
-            sendErrorEvent(e.message ?: "Unknown error")
+            Log.e(TAG, "sendUssdRequest exception: \${e.message}")
+            sendErrorEvent(e.message ?: "ط®ط·ط£ ط؛ظٹط± ظ…ط¹ط±ظˆظپ")
             promise.reject("USSD_ERROR", e.message, e)
-        }
-    }
-
-    private fun startViaIntent(code: String, simSlot: Int, promise: Promise) {
-        try {
-            val cleanCode = code.replace("#", "%23")
-            val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${'$'}cleanCode")).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                if (simSlot >= 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    val telecom = reactContext.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-                    val handles = telecom?.callCapablePhoneAccounts
-                    if (handles != null && simSlot < handles.size)
-                        putExtra("android.telecom.extra.PHONE_ACCOUNT_HANDLE", handles[simSlot])
-                }
-            }
-            reactContext.startActivity(intent)
-            promise.resolve(true)
-        } catch (e: Exception) {
-            sendErrorEvent(e.message ?: "Unknown error starting USSD")
-            promise.reject("USSD_START_ERROR", e.message, e)
         }
     }
 
@@ -431,13 +462,16 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
             val clazz = Class.forName("android.telephony.SubscriptionManager")
             val method = clazz.getMethod("getActiveSubscriptionInfoForSimSlotIndex", Int::class.java)
             val info = method.invoke(sm, slot) ?: return -1
-            val subIdField = info.javaClass.getMethod("getSubscriptionId")
-            subIdField.invoke(info) as? Int ?: -1
+            info.javaClass.getMethod("getSubscriptionId").invoke(info) as? Int ?: -1
         } catch (_: Exception) { -1 }
     }
 
     @ReactMethod
     fun sendUssdReply(text: String, promise: Promise) {
+        if (!UssdAccessibilityService.sessionActive) {
+            promise.reject("NO_SESSION", "ظ„ط§ طھظˆط¬ط¯ ط¬ظ„ط³ط© USSD ظ†ط´ط·ط©")
+            return
+        }
         UssdAccessibilityService.setAwaitingReply(text)
         promise.resolve(true)
     }
@@ -450,6 +484,27 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun checkAccessibilityEnabled(promise: Promise) {
+        val name = "\${reactContext.packageName}/\${UssdAccessibilityService::class.java.name}"
+        val value = Settings.Secure.getString(
+            reactContext.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: ""
+        promise.resolve(value.contains(name))
+    }
+
+    @ReactMethod
+    fun openAccessibilitySettings(promise: Promise) {
+        try {
+            reactContext.startActivity(
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+            promise.resolve(true)
+        } catch (e: Exception) { promise.resolve(false) }
+    }
+
+    @ReactMethod
     fun checkOverlayPermission(promise: Promise) {
         promise.resolve(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
@@ -459,30 +514,16 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun checkAccessibilityEnabled(promise: Promise) {
-        val serviceName = "${'$'}{reactContext.packageName}/${'$'}{UssdAccessibilityService::class.java.name}"
-        val value = Settings.Secure.getString(
-            reactContext.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
-        promise.resolve(value.contains(serviceName))
-    }
-
-    @ReactMethod
     fun requestOverlayPermission(promise: Promise) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                reactContext.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${'$'}{reactContext.packageName}")).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                reactContext.startActivity(
+                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:\${reactContext.packageName}")).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
             }
-            promise.resolve(true)
-        } catch (e: Exception) { promise.resolve(false) }
-    }
-
-    @ReactMethod
-    fun openAccessibilitySettings(promise: Promise) {
-        try {
-            reactContext.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
             promise.resolve(true)
         } catch (e: Exception) { promise.resolve(false) }
     }
@@ -492,7 +533,6 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
         Arguments.createMap().also { it.putString("reason", reason) })
     fun sendErrorEvent(message: String) = emit(EVENT_ERROR,
         Arguments.createMap().also { it.putString("message", message) })
-    fun sendForegroundEvent() = emit(EVENT_FOREGROUND, null)
 
     private fun emit(eventName: String, data: Any?) {
         try {
@@ -503,9 +543,14 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod fun addListener(eventName: String) {}
     @ReactMethod fun removeListeners(count: Int) {}
-}`,
+}`;
+}
 
-  'UssdPackage.kt': `package ${PACKAGE}
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// UssdPackage.kt
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function buildPackageKt(pkg) {
+  return `package ${pkg}
 
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
@@ -517,53 +562,77 @@ class UssdPackage : ReactPackage {
         listOf(UssdNativeModule(reactContext))
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
         emptyList()
-}`,
-};
+}`;
+}
 
-const ACCESSIBILITY_XML = `<?xml version="1.0" encoding="utf-8"?>
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Plugin functions
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+function withUssdKotlinFiles(config) {
+  return withDangerousMod(config, [
+    'android',
+    async (cfg) => {
+      // FIX #1: ط§ظ‚ط±ط£ ط§ظ„ظ€ package ظ…ظ† config
+      const pkg = getPackage(cfg);
+      const pkgPath = pkg.replace(/\./g, '/');
+
+      const root = cfg.modRequest.platformProjectRoot;
+      const javaDir = path.join(root, 'app/src/main/java', pkgPath);
+      const xmlDir  = path.join(root, 'app/src/main/res/xml');
+      const valDir  = path.join(root, 'app/src/main/res/values');
+
+      fs.mkdirSync(javaDir, { recursive: true });
+      fs.mkdirSync(xmlDir,  { recursive: true });
+      fs.mkdirSync(valDir,  { recursive: true });
+
+      // ط§ظƒطھط¨ ظ…ظ„ظپط§طھ Kotlin ظ…ط¹ ط§ظ„ظ€ package ط§ظ„طµط­ظٹط­
+      const kotlinFiles = {
+        'UssdAccessibilityService.kt': buildAccessibilityServiceKt(pkg),
+        'UssdNativeModule.kt': buildNativeModuleKt(pkg),
+        'UssdPackage.kt': buildPackageKt(pkg),
+      };
+      for (const [filename, content] of Object.entries(kotlinFiles)) {
+        fs.writeFileSync(path.join(javaDir, filename), content, 'utf8');
+      }
+
+      // ظ…ظ„ظپ XML ظ„ظ„ظ€ accessibility service
+      const accessibilityXml = `<?xml version="1.0" encoding="utf-8"?>
 <accessibility-service
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_service_description"
-    android:notificationTimeout="100"
-    android:packageNames="com.android.phone,com.google.android.dialer,com.samsung.android.dialer,com.android.dialer"
-    android:settingsActivity="${PACKAGE}.MainActivity" />`;
+    android:notificationTimeout="50"
+    android:packageNames="com.android.phone,com.google.android.dialer,com.samsung.android.dialer,com.android.dialer,com.huawei.phone,com.miui.phone"
+    android:settingsActivity="${pkg}.MainActivity" />`;
 
-const STRING_RESOURCES_ADDON = `    <string name="accessibility_service_label">USSD ط¨ظˆط§ط¬ظ‡ط© ظ…ط±ط¦ظٹط©</string>
+      fs.writeFileSync(
+        path.join(xmlDir, 'accessibility_service_config.xml'),
+        accessibilityXml,
+        'utf8'
+      );
+
+      // strings
+      const stringResources = `    <string name="accessibility_service_label">USSD ط¨ظˆط§ط¬ظ‡ط© ظ…ط±ط¦ظٹط©</string>
     <string name="accessibility_service_description">ظٹطھظٹط­ ظ„ظ„طھط·ط¨ظٹظ‚ ظ‚ط±ط§ط،ط© ط´ط§ط´ط§طھ USSD ظˆظ…ظ„ط، ط§ظ„ط±ط¯ظˆط¯ طھظ„ظ‚ط§ط¦ظٹط§ظ‹ ط¯ظˆظ† ط§ظ„ط­ط§ط¬ط© ظ„ظ†ط§ظپط°ط© ط§ظ„ظ†ط¸ط§ظ…</string>`;
 
-function withUssdKotlinFiles(config) {
-  return withDangerousMod(config, [
-    'android',
-    async (cfg) => {
-      const root = cfg.modRequest.platformProjectRoot;
-      const javaDir = path.join(root, 'app/src/main/java', PACKAGE_PATH);
-      const xmlDir = path.join(root, 'app/src/main/res/xml');
-      const valuesDir = path.join(root, 'app/src/main/res/values');
-
-      fs.mkdirSync(javaDir, { recursive: true });
-      fs.mkdirSync(xmlDir, { recursive: true });
-      fs.mkdirSync(valuesDir, { recursive: true });
-
-      for (const [filename, content] of Object.entries(KOTLIN_FILES)) {
-        fs.writeFileSync(path.join(javaDir, filename), content, 'utf8');
-      }
-      fs.writeFileSync(path.join(xmlDir, 'accessibility_service_config.xml'), ACCESSIBILITY_XML, 'utf8');
-
-      const stringsPath = path.join(valuesDir, 'strings.xml');
-      if (!fs.existsSync(stringsPath)) {
-        fs.writeFileSync(stringsPath,
-          `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n${STRING_RESOURCES_ADDON}\n</resources>`, 'utf8');
+      const strPath = path.join(valDir, 'strings.xml');
+      if (!fs.existsSync(strPath)) {
+        fs.writeFileSync(
+          strPath,
+          `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n${stringResources}\n</resources>`,
+          'utf8'
+        );
       } else {
-        let existing = fs.readFileSync(stringsPath, 'utf8');
+        let existing = fs.readFileSync(strPath, 'utf8');
         if (!existing.includes('accessibility_service_label')) {
-          existing = existing.replace('</resources>',
-            `${STRING_RESOURCES_ADDON}\n</resources>`);
-          fs.writeFileSync(stringsPath, existing, 'utf8');
+          existing = existing.replace('</resources>', `${stringResources}\n</resources>`);
+          fs.writeFileSync(strPath, existing, 'utf8');
         }
       }
+
       return cfg;
     },
   ]);
@@ -587,7 +656,10 @@ function withUssdManifest(config) {
           action: [{ $: { 'android:name': 'android.accessibilityservice.AccessibilityService' } }],
         }],
         'meta-data': [{
-          $: { 'android:name': 'android.accessibilityservice', 'android:resource': '@xml/accessibility_service_config' },
+          $: {
+            'android:name': 'android.accessibilityservice',
+            'android:resource': '@xml/accessibility_service_config',
+          },
         }],
       });
     }
@@ -595,8 +667,7 @@ function withUssdManifest(config) {
     const permissions = [
       'android.permission.CALL_PHONE',
       'android.permission.READ_PHONE_STATE',
-      'android.permission.SYSTEM_ALERT_WINDOW',
-      'android.permission.FOREGROUND_SERVICE',
+      'android.permission.READ_PHONE_NUMBERS',
     ];
     const existing = (manifest.manifest['uses-permission'] || []).map(p => p.$['android:name']);
     for (const perm of permissions) {
@@ -605,20 +676,51 @@ function withUssdManifest(config) {
         manifest.manifest['uses-permission'].push({ $: { 'android:name': perm } });
       }
     }
+
     return cfg;
   });
 }
 
+// FIX #2: withMainApplication ظٹط¯ط¹ظ… Kotlin ظˆJava ظˆظٹط¶ظٹظپ import ط¨ط´ظƒظ„ ط¢ظ…ظ†
 function withUssdMainApplication(config) {
   return withMainApplication(config, (cfg) => {
+    const pkg = getPackage(cfg);
     let src = cfg.modResults.contents;
+    const isKotlin = cfg.modResults.language === 'kt' ||
+                     cfg.modResults.path?.endsWith('.kt');
+
+    // ط£ط¶ظپ import ط¥ط°ط§ ظ…ط§ ظ…ظˆط¬ظˆط¯
+    const importLine = isKotlin
+      ? `import ${pkg}.UssdPackage`
+      : `import ${pkg}.UssdPackage;`;
+
     if (!src.includes('UssdPackage')) {
+      // ط£ط¶ظپ import ط¨ط¹ط¯ ط¢ط®ط± import ظ…ظˆط¬ظˆط¯
       src = src.replace(
-        'PackageList(this).packages.apply {',
-        'PackageList(this).packages.apply {\n                    add(UssdPackage())'
+        /(import [^\n]+\n)(?!import)/,
+        `$1${importLine}\n`
       );
+
+      // ط£ط¶ظپ ط§ظ„ظ€ package ظپظٹ ط§ظ„ظ…ظƒط§ظ† ط§ظ„طµط­ â€” ظٹط¯ط¹ظ… Kotlin ظˆJava
+      const kotlinPattern = 'PackageList(this).packages.apply {';
+      const javaPattern   = 'new PackageList(this).getPackages()';
+
+      if (src.includes(kotlinPattern)) {
+        src = src.replace(
+          kotlinPattern,
+          `${kotlinPattern}\n                    add(UssdPackage())`
+        );
+      } else if (src.includes(javaPattern)) {
+        // Java fallback
+        src = src.replace(
+          javaPattern,
+          `${javaPattern}; packages.add(new UssdPackage())`
+        );
+      }
+
       cfg.modResults.contents = src;
     }
+
     return cfg;
   });
 }
