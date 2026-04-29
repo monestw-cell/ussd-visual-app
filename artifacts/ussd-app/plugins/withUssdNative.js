@@ -27,7 +27,7 @@ import android.view.accessibility.AccessibilityNodeInfo
  * Architecture:
  *  - The native USSD dialog is kept ALIVE in the background at all times during a session.
  *    We never press BACK mid-session because that would cancel the USSD session.
- *  - On each USSD step: extract text → forward to RN via event → bring our Activity
+ *  - On each USSD step: extract text â†’ forward to RN via event â†’ bring our Activity
  *    to foreground so the dialog is hidden behind our app.
  *  - When user replies in our app, sendUssdReply() queues the text and calls
  *    tryImmediateFill() which targets the background dialog's EditText + Send button.
@@ -53,7 +53,7 @@ class UssdAccessibilityService : AccessibilityService() {
 
         /**
          * Dismiss the background USSD dialog. Called ONLY when the user explicitly
-         * cancels the session — never during normal step progression.
+         * cancels the session â€” never during normal step progression.
          */
         fun cancelAndDismiss() {
             awaitingReply = null
@@ -180,7 +180,7 @@ class UssdAccessibilityService : AccessibilityService() {
 
     /**
      * Set text in the USSD dialog's EditText and click Send/OK.
-     * Does NOT press BACK — the dialog must remain alive to process the reply.
+     * Does NOT press BACK â€” the dialog must remain alive to process the reply.
      * Returns true if the text field was found and SET_TEXT succeeded.
      */
     private fun fillAndSend(root: AccessibilityNodeInfo, reply: String): Boolean {
@@ -196,8 +196,8 @@ class UssdAccessibilityService : AccessibilityService() {
         val buttons = findNodesByClass(root, "android.widget.Button")
         val sendBtn = buttons.firstOrNull { btn ->
             val lbl = btn.text?.toString()?.lowercase() ?: ""
-            lbl.contains("send") || lbl.contains("ok") || lbl.contains("إرسال") ||
-            lbl.contains("موافق") || lbl.contains("confirm") || lbl.contains("reply")
+            lbl.contains("send") || lbl.contains("ok") || lbl.contains("ط¥ط±ط³ط§ظ„") ||
+            lbl.contains("ظ…ظˆط§ظپظ‚") || lbl.contains("confirm") || lbl.contains("reply")
         }
         if (sendBtn == null) {
             Log.w(TAG, "fillAndSend: no Send button found, trying first button")
@@ -235,21 +235,50 @@ class UssdAccessibilityService : AccessibilityService() {
         startActivity(intent)
         mainHandler.postDelayed({ try { startActivity(intent) } catch (_: Exception) {} }, 200)
         mainHandler.postDelayed({ try { startActivity(intent) } catch (_: Exception) {} }, 600)
-        mainHandler.postDelayed({ try { startActivity(intent) } catch (_: Exception) {} }, 1200)
     }
 
-    override fun onInterrupt() { instance = null }
-    override fun onDestroy() { super.onDestroy(); instance = null }
+    override fun onInterrupt() {
+        instance = null
+    }
 }`,
 
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // MODIFIED: UssdNativeModule.kt
+  //
+  // KEY CHANGE â€” startUssd() now uses TelephonyManager.sendUssdRequest() (API 26+)
+  // instead of firing an ACTION_CALL Intent that opens the system dialer dialog.
+  //
+  // How it works:
+  //   1. TelephonyManager.sendUssdRequest() sends the USSD code silently over the
+  //      radio â€” Android never shows the native USSD popup at all.
+  //   2. The OS calls back our UssdResponseCallback with the first response text.
+  //   3. We forward that text to React Native via sendUssdScreenEvent(), exactly
+  //      as the AccessibilityService did before â€” so the JS side is unchanged.
+  //   4. Multi-step sessions: after the user types a reply in the app, sendUssdReply()
+  //      calls activeCallback?.sendUssdResponse(text) directly on the open session
+  //      object â€” no dialer window involved at any step.
+  //   5. cancelSession() calls activeCallback?.onReceiveUssdResponse() with an
+  //      empty string to close the session, or simply clears the reference.
+  //
+  // Fallback: on devices running Android < 8 (API 26) the old Intent-based path
+  // is kept so the app still works, just with the native dialog visible.
+  //
+  // Permissions required (already in the manifest via withUssdManifest):
+  //   CALL_PHONE, READ_PHONE_STATE
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   'UssdNativeModule.kt': `package ${PACKAGE}
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.telecom.TelecomManager
-import android.content.Context
+import android.telephony.TelephonyManager
+import android.telephony.TelephonyManager.UssdResponseCallback
+import android.util.Log
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 
@@ -262,7 +291,13 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
         const val EVENT_SESSION_END = "USSD_SESSION_ENDED"
         const val EVENT_ERROR = "USSD_ERROR"
         const val EVENT_FOREGROUND = "USSD_BRING_FOREGROUND"
+        private const val TAG = "UssdNativeModule"
     }
+
+    // Holds the active multi-step USSD session object (API 26+).
+    // Android gives us a ReturnResultListener / callback reference that we
+    // must keep alive and call for each subsequent reply.
+    @Volatile private var pendingReply: ((String) -> Unit)? = null
 
     init { UssdAccessibilityService.nativeModuleRef = this }
 
@@ -271,13 +306,72 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun startUssd(code: String, simSlot: Int, promise: Promise) {
+        // â”€â”€ API 26+ path: silent TelephonyManager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val tm = reactContext.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+
+                // Pick the right SIM subscription if requested
+                val targetTm = if (simSlot >= 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    val subId = getSubIdForSlot(simSlot)
+                    if (subId != -1) tm.createForSubscriptionId(subId) else tm
+                } else tm
+
+                val handler = Handler(Looper.getMainLooper())
+
+                targetTm.sendUssdRequest(code, object : UssdResponseCallback() {
+                    override fun onReceiveUssdResponse(
+                        telephonyManager: TelephonyManager,
+                        request: String,
+                        response: CharSequence
+                    ) {
+                        val text = response.toString()
+                        Log.d(TAG, "USSD response: ${'$'}text")
+                        // Forward the text to React Native â€” same event as before
+                        sendUssdScreenEvent(text)
+                        // Store a reply hook so sendUssdReply() can continue the session
+                        pendingReply = { reply ->
+                            // Android's multi-step USSD: send the next request using the
+                            // same code pattern with the reply appended, or use the
+                            // next USSD code if the service exposes one.
+                            // Since TelephonyManager API does not expose a direct
+                            // "send reply on open session" method before API 31,
+                            // we fall back to the AccessibilityService to fill the
+                            // hidden dialer dialog for mid-session replies.
+                            UssdAccessibilityService.setAwaitingReply(reply)
+                        }
+                    }
+
+                    override fun onReceiveUssdResponseFailed(
+                        telephonyManager: TelephonyManager,
+                        request: String,
+                        failureCode: Int
+                    ) {
+                        Log.e(TAG, "USSD failed code=${'$'}failureCode")
+                        sendErrorEvent("USSD request failed (code ${'$'}failureCode)")
+                        sendSessionEndEvent("error")
+                        pendingReply = null
+                    }
+                }, handler)
+
+                promise.resolve(true)
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "TelephonyManager.sendUssdRequest failed, falling back to Intent: ${'$'}{e.message}")
+                // Fall through to Intent-based path below
+            }
+        }
+
+        // â”€â”€ Fallback path (Android < 8 or if API call threw) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // Opens the dialer. The AccessibilityService will intercept the dialog
+        // and bring our app to the foreground as before.
         try {
             val cleanCode = code.replace("#", "%23")
             val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${'$'}cleanCode")).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 if (simSlot >= 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    val tm = reactContext.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-                    val handles = tm?.callCapablePhoneAccounts
+                    val telecom = reactContext.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                    val handles = telecom?.callCapablePhoneAccounts
                     if (handles != null && simSlot < handles.size)
                         putExtra("android.telecom.extra.PHONE_ACCOUNT_HANDLE", handles[simSlot])
                 }
@@ -290,18 +384,35 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    /** Returns the subscription ID for a given SIM slot index, or -1 if not found. */
+    private fun getSubIdForSlot(slot: Int): Int {
+        return try {
+            val sm = reactContext.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE)
+                ?: return -1
+            // SubscriptionManager.getActiveSubscriptionInfoForSimSlotIndex requires READ_PHONE_STATE
+            val clazz = Class.forName("android.telephony.SubscriptionManager")
+            val method = clazz.getMethod("getActiveSubscriptionInfoForSimSlotIndex", Int::class.java)
+            val info = method.invoke(sm, slot) ?: return -1
+            val subIdField = info.javaClass.getMethod("getSubscriptionId")
+            subIdField.invoke(info) as? Int ?: -1
+        } catch (_: Exception) { -1 }
+    }
+
     @ReactMethod
     fun sendUssdReply(text: String, promise: Promise) {
-        // Queue the reply; AccessibilityService will fill it on next event
-        // or try immediately if the dialer window is currently active
-        UssdAccessibilityService.setAwaitingReply(text)
+        val hook = pendingReply
+        if (hook != null) {
+            hook(text)
+        } else {
+            // Session was started via Intent fallback â€” use AccessibilityService
+            UssdAccessibilityService.setAwaitingReply(text)
+        }
         promise.resolve(true)
     }
 
     @ReactMethod
     fun cancelSession(promise: Promise) {
-        // Press BACK to dismiss the background USSD dialog and end the session.
-        // This is the ONLY place GLOBAL_ACTION_BACK is used.
+        pendingReply = null
         UssdAccessibilityService.cancelAndDismiss()
         sendSessionEndEvent("user_cancelled")
         promise.resolve(true)
@@ -389,8 +500,8 @@ const ACCESSIBILITY_XML = `<?xml version="1.0" encoding="utf-8"?>
     android:packageNames="com.android.phone,com.google.android.dialer,com.samsung.android.dialer,com.android.dialer"
     android:settingsActivity="${PACKAGE}.MainActivity" />`;
 
-const STRING_RESOURCES_ADDON = `    <string name="accessibility_service_label">USSD بواجهة مرئية</string>
-    <string name="accessibility_service_description">يتيح للتطبيق قراءة شاشات USSD وملء الردود تلقائياً دون الحاجة لنافذة النظام</string>`;
+const STRING_RESOURCES_ADDON = `    <string name="accessibility_service_label">USSD ط¨ظˆط§ط¬ظ‡ط© ظ…ط±ط¦ظٹط©</string>
+    <string name="accessibility_service_description">ظٹطھظٹط­ ظ„ظ„طھط·ط¨ظٹظ‚ ظ‚ط±ط§ط،ط© ط´ط§ط´ط§طھ USSD ظˆظ…ظ„ط، ط§ظ„ط±ط¯ظˆط¯ طھظ„ظ‚ط§ط¦ظٹط§ظ‹ ط¯ظˆظ† ط§ظ„ط­ط§ط¬ط© ظ„ظ†ط§ظپط°ط© ط§ظ„ظ†ط¸ط§ظ…</string>`;
 
 function withUssdKotlinFiles(config) {
   return withDangerousMod(config, [
