@@ -266,10 +266,12 @@ class UssdAccessibilityService : AccessibilityService() {
   // Permissions required (already in the manifest via withUssdManifest):
   //   CALL_PHONE, READ_PHONE_STATE
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  'UssdNativeModule.kt': `package ${PACKAGE}
+  'UssdNativeModule.kt': `package com.ussdapp
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -279,11 +281,15 @@ import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import android.telephony.TelephonyManager.UssdResponseCallback
 import android.util.Log
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import com.facebook.react.modules.core.PermissionAwareActivity
+import com.facebook.react.modules.core.PermissionListener
 
 class UssdNativeModule(private val reactContext: ReactApplicationContext) :
-    ReactContextBaseJavaModule(reactContext) {
+    ReactContextBaseJavaModule(reactContext), PermissionListener {
 
     companion object {
         const val MODULE_NAME = "UssdNativeModule"
@@ -292,79 +298,114 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
         const val EVENT_ERROR = "USSD_ERROR"
         const val EVENT_FOREGROUND = "USSD_BRING_FOREGROUND"
         private const val TAG = "UssdNativeModule"
+        private const val PERMISSION_REQUEST_CODE = 9001
     }
 
-    // Holds the active multi-step USSD session object (API 26+).
-    // Android gives us a ReturnResultListener / callback reference that we
-    // must keep alive and call for each subsequent reply.
-    @Volatile private var pendingReply: ((String) -> Unit)? = null
+    // Pending USSD code + simSlot waiting for permission grant
+    @Volatile private var pendingUssdCode: String? = null
+    @Volatile private var pendingSimSlot: Int = -1
+    @Volatile private var pendingPromise: Promise? = null
 
     init { UssdAccessibilityService.nativeModuleRef = this }
 
     override fun getName() = MODULE_NAME
     override fun canOverrideExistingModule() = false
 
+    // PermissionListener â€” called when the user responds to the permission dialog
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray): Boolean {
+        if (requestCode != PERMISSION_REQUEST_CODE) return false
+        val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+        val code = pendingUssdCode
+        val slot = pendingSimSlot
+        val promise = pendingPromise
+        pendingUssdCode = null
+        pendingSimSlot = -1
+        pendingPromise = null
+        if (granted && code != null && promise != null) {
+            executeSendUssdRequest(code, slot, promise)
+        } else {
+            promise?.reject("PERMISSION_DENIED", "CALL_PHONE permission was denied")
+        }
+        return true
+    }
+
     @ReactMethod
     fun startUssd(code: String, simSlot: Int, promise: Promise) {
-        // â”€â”€ API 26+ path: silent TelephonyManager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                val tm = reactContext.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-
-                // Pick the right SIM subscription if requested
-                val targetTm = if (simSlot >= 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val subId = getSubIdForSlot(simSlot)
-                    if (subId != -1) tm.createForSubscriptionId(subId) else tm
-                } else tm
-
-                val handler = Handler(Looper.getMainLooper())
-
-                targetTm.sendUssdRequest(code, object : UssdResponseCallback() {
-                    override fun onReceiveUssdResponse(
-                        telephonyManager: TelephonyManager,
-                        request: String,
-                        response: CharSequence
-                    ) {
-                        val text = response.toString()
-                        Log.d(TAG, "USSD response: ${'$'}text")
-                        // Forward the text to React Native â€” same event as before
-                        sendUssdScreenEvent(text)
-                        // Store a reply hook so sendUssdReply() can continue the session
-                        pendingReply = { reply ->
-                            // Android's multi-step USSD: send the next request using the
-                            // same code pattern with the reply appended, or use the
-                            // next USSD code if the service exposes one.
-                            // Since TelephonyManager API does not expose a direct
-                            // "send reply on open session" method before API 31,
-                            // we fall back to the AccessibilityService to fill the
-                            // hidden dialer dialog for mid-session replies.
-                            UssdAccessibilityService.setAwaitingReply(reply)
-                        }
-                    }
-
-                    override fun onReceiveUssdResponseFailed(
-                        telephonyManager: TelephonyManager,
-                        request: String,
-                        failureCode: Int
-                    ) {
-                        Log.e(TAG, "USSD failed code=${'$'}failureCode")
-                        sendErrorEvent("USSD request failed (code ${'$'}failureCode)")
-                        sendSessionEndEvent("error")
-                        pendingReply = null
-                    }
-                }, handler)
-
-                promise.resolve(true)
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "TelephonyManager.sendUssdRequest failed, falling back to Intent: ${'$'}{e.message}")
-                // Fall through to Intent-based path below
-            }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            // Android < 8: fallback to Intent (dialer will show, AccessibilityService handles it)
+            startViaIntent(code, simSlot, promise)
+            return
         }
 
-        // â”€â”€ Fallback path (Android < 8 or if API call threw) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // Opens the dialer. The AccessibilityService will intercept the dialog
-        // and bring our app to the foreground as before.
+        val hasPermission = ContextCompat.checkSelfPermission(
+            reactContext, Manifest.permission.CALL_PHONE
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (hasPermission) {
+            executeSendUssdRequest(code, simSlot, promise)
+        } else {
+            // Store pending state and request permission from the current Activity
+            pendingUssdCode = code
+            pendingSimSlot = simSlot
+            pendingPromise = promise
+            val activity = currentActivity
+            if (activity is PermissionAwareActivity) {
+                activity.requestPermissions(
+                    arrayOf(Manifest.permission.CALL_PHONE),
+                    PERMISSION_REQUEST_CODE,
+                    this
+                )
+            } else {
+                // Cannot request permission â€” reject cleanly
+                pendingUssdCode = null
+                pendingSimSlot = -1
+                pendingPromise = null
+                promise.reject("NO_ACTIVITY", "Cannot request permission: no foreground activity")
+            }
+        }
+    }
+
+    private fun executeSendUssdRequest(code: String, simSlot: Int, promise: Promise) {
+        try {
+            val tm = reactContext.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+            val targetTm = if (simSlot >= 0) {
+                val subId = getSubIdForSlot(simSlot)
+                if (subId != -1) tm.createForSubscriptionId(subId) else tm
+            } else tm
+
+            val handler = Handler(Looper.getMainLooper())
+
+            targetTm.sendUssdRequest(code, object : UssdResponseCallback() {
+                override fun onReceiveUssdResponse(
+                    telephonyManager: TelephonyManager,
+                    request: String,
+                    response: CharSequence
+                ) {
+                    val text = response.toString()
+                    Log.d(TAG, "USSD response: ${'$'}text")
+                    sendUssdScreenEvent(text)
+                }
+
+                override fun onReceiveUssdResponseFailed(
+                    telephonyManager: TelephonyManager,
+                    request: String,
+                    failureCode: Int
+                ) {
+                    Log.e(TAG, "USSD failed code=${'$'}failureCode")
+                    sendErrorEvent("USSD request failed (code ${'$'}failureCode)")
+                    sendSessionEndEvent("error")
+                }
+            }, handler)
+
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "sendUssdRequest exception: ${'$'}{e.message}")
+            sendErrorEvent(e.message ?: "Unknown error")
+            promise.reject("USSD_ERROR", e.message, e)
+        }
+    }
+
+    private fun startViaIntent(code: String, simSlot: Int, promise: Promise) {
         try {
             val cleanCode = code.replace("#", "%23")
             val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${'$'}cleanCode")).apply {
@@ -384,12 +425,9 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    /** Returns the subscription ID for a given SIM slot index, or -1 if not found. */
     private fun getSubIdForSlot(slot: Int): Int {
         return try {
-            val sm = reactContext.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE)
-                ?: return -1
-            // SubscriptionManager.getActiveSubscriptionInfoForSimSlotIndex requires READ_PHONE_STATE
+            val sm = reactContext.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) ?: return -1
             val clazz = Class.forName("android.telephony.SubscriptionManager")
             val method = clazz.getMethod("getActiveSubscriptionInfoForSimSlotIndex", Int::class.java)
             val info = method.invoke(sm, slot) ?: return -1
@@ -400,19 +438,12 @@ class UssdNativeModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun sendUssdReply(text: String, promise: Promise) {
-        val hook = pendingReply
-        if (hook != null) {
-            hook(text)
-        } else {
-            // Session was started via Intent fallback â€” use AccessibilityService
-            UssdAccessibilityService.setAwaitingReply(text)
-        }
+        UssdAccessibilityService.setAwaitingReply(text)
         promise.resolve(true)
     }
 
     @ReactMethod
     fun cancelSession(promise: Promise) {
-        pendingReply = null
         UssdAccessibilityService.cancelAndDismiss()
         sendSessionEndEvent("user_cancelled")
         promise.resolve(true)
