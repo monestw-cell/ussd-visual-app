@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
-import { AppState } from 'react-native';
+import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import { UssdBridge } from '@/services/ussdBridge';
 import { parseUssdText, ParsedScreen } from '@/utils/ussdParser';
 import { HistoryDb } from '@/database/historyDb';
@@ -125,6 +125,29 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setDemoMode(false);
     setStatus('connecting');
 
+    if (Platform.OS === 'android') {
+      try {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.CALL_PHONE,
+          {
+            title: 'إذن إجراء المكالمات',
+            message: 'يحتاج التطبيق هذا الإذن لإرسال رموز USSD نيابةً عنك.',
+            buttonPositive: 'موافق',
+            buttonNegative: 'إلغاء',
+          }
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          setError('لم يتم منح إذن الاتصال. لا يمكن بدء جلسة USSD بدونه.');
+          setStatus('error');
+          return;
+        }
+      } catch (e) {
+        setError('فشل طلب إذن الاتصال.');
+        setStatus('error');
+        return;
+      }
+    }
+
     const screenSub = UssdBridge.onScreen(rawText => applyScreen(rawText));
     const endSub = UssdBridge.onSessionEnd(data => {
       setStatus('ended');
@@ -148,8 +171,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     try {
       await UssdBridge.startUssd(code, simSlot);
-    } catch (e) {
-      setError('فشل في بدء الجلسة. تأكد من وجود إشارة شبكة وصلاحيات USSD.');
+    } catch (e: any) {
+      const detail = e?.message || e?.code || String(e);
+      setError(`فشل في بدء الجلسة: ${detail}`);
       setStatus('error');
     }
   };
