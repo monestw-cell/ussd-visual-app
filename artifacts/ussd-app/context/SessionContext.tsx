@@ -127,22 +127,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     if (Platform.OS === 'android') {
       try {
-        const granted = await PermissionsAndroid.request(
+        const results = await PermissionsAndroid.requestMultiple([
           PermissionsAndroid.PERMISSIONS.CALL_PHONE,
-          {
-            title: 'إذن إجراء المكالمات',
-            message: 'يحتاج التطبيق هذا الإذن لإرسال رموز USSD نيابةً عنك.',
-            buttonPositive: 'موافق',
-            buttonNegative: 'إلغاء',
-          }
-        );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          setError('لم يتم منح إذن الاتصال. لا يمكن بدء جلسة USSD بدونه.');
+          PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE,
+        ]);
+        const callOk = results[PermissionsAndroid.PERMISSIONS.CALL_PHONE] === PermissionsAndroid.RESULTS.GRANTED;
+        const phoneStateOk = results[PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE] === PermissionsAndroid.RESULTS.GRANTED;
+        if (!callOk || !phoneStateOk) {
+          const missing = [
+            !callOk && 'الاتصال',
+            !phoneStateOk && 'قراءة حالة الهاتف',
+          ].filter(Boolean).join(' و ');
+          setError(`لم يتم منح إذن ${missing}. لا يمكن بدء جلسة USSD بدونه.`);
           setStatus('error');
           return;
         }
       } catch (e) {
-        setError('فشل طلب إذن الاتصال.');
+        setError('فشل طلب أذونات الهاتف.');
         setStatus('error');
         return;
       }
