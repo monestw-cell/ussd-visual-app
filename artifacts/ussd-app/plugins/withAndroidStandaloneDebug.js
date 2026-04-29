@@ -1,4 +1,5 @@
 const {
+  withAppBuildGradle,
   withMainApplication,
   withDangerousMod,
 } = require('expo/config-plugins');
@@ -6,7 +7,33 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+const SPLITS_AND_RENAME_BLOCK = `
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a'
+            universalApk false
+        }
+    }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            output.outputFileName = "app-\${variant.buildType.name}.apk"
+        }
+    }
+`;
+
 module.exports = function withAndroidStandaloneDebug(config) {
+  config = withAppBuildGradle(config, (cfg) => {
+    let g = cfg.modResults.contents;
+    if (g.includes('android {') && !g.includes('splits {')) {
+      g = g.replace(/android\s*\{/, 'android {' + SPLITS_AND_RENAME_BLOCK);
+    }
+    cfg.modResults.contents = g;
+    return cfg;
+  });
+
   config = withMainApplication(config, (cfg) => {
     let mainApp = cfg.modResults.contents;
     if (!mainApp.includes('getUseDeveloperSupport')) {
