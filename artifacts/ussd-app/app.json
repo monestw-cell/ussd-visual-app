@@ -43,7 +43,8 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "./plugins/withUssdNative"
+      "./plugins/withUssdNative",
+      "./plugins/withAndroidStandaloneDebug"
     ],
     "experiments": {
       "typedRoutes": true,
