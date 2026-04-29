@@ -221,10 +221,21 @@ class UssdAccessibilityService : AccessibilityService() {
 
     private fun bringAppToForeground() {
         val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                Intent.FLAG_ACTIVITY_NO_ANIMATION
+            )
             putExtra("from_ussd_service", true)
         }
+        // Aggressive re-foregrounding: dialer dialogs (especially Samsung)
+        // can re-appear on top after our first launch. We re-trigger the
+        // launch a few times to override.
         startActivity(intent)
+        mainHandler.postDelayed({ try { startActivity(intent) } catch (_: Exception) {} }, 200)
+        mainHandler.postDelayed({ try { startActivity(intent) } catch (_: Exception) {} }, 600)
+        mainHandler.postDelayed({ try { startActivity(intent) } catch (_: Exception) {} }, 1200)
     }
 
     override fun onInterrupt() { instance = null }
